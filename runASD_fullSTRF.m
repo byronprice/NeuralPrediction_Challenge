@@ -5,9 +5,16 @@ cellinfo
 numCells = length(celldata);
 
 prediction = struct('cellid',cell(numCells,1),'response',zeros(713,1));
-rfs = cell(numCells,3);
+rfs = cell(numCells,4);
+
+neuralResponse = cell(numCells,1);
 for ii=1:numCells
     load(celldata(ii).datafile,'resp');
+    neuralResponse{ii} = resp;
+end
+    
+for ii=1:numCells
+    resp = neuralResponse{ii};
     inds = find(~isnan(resp));
     newResp = resp(~isnan(resp));
     numFrames = length(newResp);
@@ -16,15 +23,24 @@ for ii=1:numCells
     meanResponse = mean(newResp);
     newResp = newResp-meanResponse;
     
-    [DIM,~,~] = size(mov);
+    [trueDim,~,movFrames] = size(mov);
+    DIM = [40,40];
     
-    numBack = 15;
-    newMov = zeros(numFrames,DIM*DIM*numBack);
+    tempMov = zeros(DIM(1),DIM(2),movFrames);
+    for jj=1:movFrames
+        tempIm = mov(:,:,jj);
+        tempIm = imresize(tempIm,DIM(1)/trueDim);
+        tempMov(:,:,jj) = tempIm;
+    end
+    clear mov;
+    
+    numBack = 25;
+    newMov = zeros(numFrames,DIM(1)*DIM(2)*numBack);
     count = 1;
     for jj=inds'
-        miniMov = zeros(DIM,DIM,numBack);
+        miniMov = zeros(DIM(1),DIM(2),numBack);
         for kk=1:numBack
-            temp = mov(:,:,max(jj-kk+1,1));
+            temp = tempMov(:,:,max(jj-kk-2,1));
             miniMov(:,:,kk) = temp;
         end
         newMov(count,:) = miniMov(:)';
@@ -32,20 +48,37 @@ for ii=1:numCells
     end
     meanToSubtract = sum(newMov,1)./numFrames;
     newMov = newMov-meanToSubtract;
-    [fullSTRF,~,~] = fastASD(newMov,newResp,[DIM,DIM,numBack],[2,2,5]);
+    [fullSTRF,~,~] = fastASD(newMov,newResp,[DIM(1),DIM(2),numBack],[2,2,1]);
     
-    figure;plot(newResp+meanResponse,max(newMov*fullSTRF+meanResponse,0),'.');
-    title(sprintf('Cell %s',celldata(ii).cellid));
-    xlabel('True Spiking');
-    ylabel('Predicted Spiking');
+    numIter = 250;result = zeros(numIter,2);
+    allInds = 1:numFrames;
+    for jj=1:numIter
+        inds = randperm(numFrames,round(numFrames.*0.75));
+        inds = ismember(allInds,inds);
+        holdOutInds = ~inds;
+        
+        [b,~,~] = glmfit(newMov(inds,:)*fullSTRF,newResp(inds),'poisson');
+        r = corrcoef(exp(newMov(holdOutInds,:)*fullSTRF*b(2:end)+b(1)),newResp(holdOutInds));
+        result(jj,1) = r(1,2);
+        
+        r = corrcoef(max(newMov(holdOutInds,:)*fullSTRF+meanResponse,0),newResp(holdOutInds));
+        result(jj,2) = r(1,2);
+    end
     
-    r = corrcoef(max(newMov*fullSTRF+meanResponse,0),newResp);
+    result = median(result,1);
+    display(result);
     
-    fprintf('\n\n\nCorrelation: %3.3f\n\n\n',r(1,2));
+    if result(1)>result(2)
+       poisson = true; 
+       [b,~,~] = glmfit(newMov*fullSTRF,newResp,'poisson');
+    else
+       poisson = false; 
+    end
     
     rfs{ii,1} = fullSTRF;
     rfs{ii,2} = meanToSubtract;
     rfs{ii,3} = meanResponse;
+    rfs{ii,4} = poisson;
     
     mov = loadimfile(celldata(ii).fullvalstimfile);
     
@@ -53,32 +86,30 @@ for ii=1:numCells
     
     [DIM1,DIM2,numFrames] = size(mov);
     
-    if DIM1*DIM2 ~= DIM*DIM
-        newMov = zeros(numFrames,DIM*DIM*numBack);
-        miniMov = zeros(DIM,DIM,numBack);
-    else
-        newMov = zeros(numFrames,DIM1*DIM2*numBack);
-        miniMov = zeros(DIM1,DIM2,numBack);
-    end
+    newMov = zeros(numFrames,DIM(1)*DIM(2)*numBack);
+    miniMov = zeros(DIM(1),DIM(2),numBack);
      
     centralMean = mean(mean(mean(mov(20:50,20:50,:))));
     for jj=1:numFrames
         for kk=1:numBack
-            if jj-kk-1 < 1
+            if jj-kk-2 < 1
                 temp = centralMean.*ones(DIM1,DIM2);
             else
-                temp = mov(:,:,max(jj-kk+1,1));
+                temp = mov(:,:,max(jj-kk-2,1));
             end
             
-            if DIM1*DIM2 ~= DIM*DIM
-                temp = imresize(temp,DIM/DIM1);
-            end
+            temp = imresize(temp,DIM(1)/DIM1);
             miniMov(:,:,kk) = temp;
         end
         newMov(jj,:) = temp(:)';
     end
     newMov = newMov-meanToSubtract;
-    prediction(ii).response = max(newMov*fullSTRF+meanResponse,0);
+    
+    if poisson == true
+        prediction(ii).response = exp(newMov*fullSTRF*b(2)+b(1));
+    else
+        prediction(ii).response = max(newMov*fullSTRF+meanResponse,0);
+    end
 end
 
 save('ASD_PredictionsFullSTRF.mat','prediction');
