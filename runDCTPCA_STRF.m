@@ -17,7 +17,7 @@ end
 myCluster = parcluster('local');
 
 if getenv('ENVIRONMENT')
-   myCluster.JobStorageLocation = getenv('TMPDIR'); 
+   myCluster.JobStorageLocation = getenv('TMPDIR');
 end
 
 parpool(myCluster,12);
@@ -29,15 +29,15 @@ parfor ii=1:numCells
     numFrames = length(newResp);
     mov = loadimfile(celldata(ii).fullstimfile);
     
+    [DIM,~,fullFrames] = size(mov);
     meanIm = mean(mov,3);
-    for jj=1:numFrames
+    for jj=1:fullFrames
         mov(:,:,jj) = mov(:,:,jj) - meanIm;
     end
     
     responseMean = mean(newResp);
     newResp = newResp-mean(newResp);
-    
-    [DIM,~,~] = size(mov);
+   
     numBack = 25;
     
     dctDim = [50,50,6];
@@ -70,7 +70,8 @@ parfor ii=1:numCells
     mu = mean(dctMov,2);
     dctMov = dctMov-repmat(mu,[1,numFrames]);
     
-    saveVar = 0.6:0.01:0.99;varLen = length(saveVar);
+    saveVar = 0.7:0.01:0.99;saveVar = [saveVar,0.991:0.001:0.995];
+    varLen = length(saveVar);
     holdOutCorr = zeros(varLen,2);
     
     for yy=1:varLen
@@ -92,12 +93,12 @@ parfor ii=1:numCells
         W = V(:,start:end)*sqrtm(D(start:end,start:end)-meanEig.*eye(q));
         W = fliplr(W);
        
-        x = pinv(W)*dctMov;
+        x = pinv(W)*dctMov; % number of dimensions kept by N
         
         reduceDctData = x'; % N-by-however-many-dimensions are kept
         
-        numIter = 250;
-        train = round(numFrames.*0.75);
+        numIter = 5;
+        train = round(numFrames.*0.8);test = numFrames-train;
         tempHoldOut = zeros(numIter,1);
         allInds = 1:numFrames;
         for zz=1:numIter
@@ -105,9 +106,20 @@ parfor ii=1:numCells
             inds = ismember(allInds,inds);
             holdOutInds = ~inds;
             
-            estFilt = reduceDctData(inds,:)\newResp(inds);
-            r = corrcoef(max(reduceDctData(holdOutInds,:)*estFilt+responseMean,0),newResp(holdOutInds));
-            tempHoldOut(zz) = r(1,2);
+           % estFilt = reduceDctData(inds,:)\newResp(inds);
+            [b,~,~] = glmfit(reduceDctData(inds,:),newResp(inds)+responseMean,'poisson');
+            
+            y = newResp(holdOutInds)+responseMean;
+            nullEst = ones(test,1).*mean(y);
+            initialDev = y.*log(y./nullEst)-(y-nullEst);
+            initialDev(isnan(initialDev) | isinf(initialDev)) = nullEst(isnan(initialDev) | isinf(initialDev));
+            nullDev = 2*sum(initialDev);
+            
+            estimate = exp(b(1)+reduceDctData(holdOutInds,:)*b(2:end));
+            initialDev = y.*log(y./estimate)-(y-estimate);
+            initialDev(isnan(initialDev) | isinf(initialDev)) = estimate(isnan(initialDev) | isinf(initialDev));
+            modelDev = 2*sum(initialDev);
+            tempHoldOut(zz) = 1-modelDev/nullDev;
         end
         holdOutCorr(yy,1) = median(tempHoldOut);
     end
@@ -116,20 +128,20 @@ parfor ii=1:numCells
     
     start = fullDctDim-prefDim+1;
     meanEig = mean(allEigs(1:start-1));
-    W = V(:,start:end)*sqrtm(D(start:end,start:end)-meanEig.*eye(q));
+    W = V(:,start:end)*sqrtm(D(start:end,start:end)-meanEig.*eye(prefDim));
     W = fliplr(W);
     Winv = pinv(W);
     x = Winv*dctMov;
     
     reduceDctData = x'; % N-by
     
-    fullRF = reduceDctData\newResp;
-    r = corrcoef(max(reduceDctData*fullRF+responseMean,0),newResp);
+    [b,~,~] = glmfit(reduceDctData,newResp+responseMean,'poisson');
+    r = corrcoef(exp(b(1)+reduceDctData*b(2:end)),newResp);
     
     fprintf('\nCorrelation: %3.3f\n\n\n',r(1,2));
     pause(1);
     
-    rfs(ii).RF = fullRF;
+    rfs(ii).RF = b;
     rfs(ii).MeanFiring = responseMean;
     rfs(ii).ToSubtract = mu;
     rfs(ii).Corr = r(1,2);
@@ -138,10 +150,10 @@ parfor ii=1:numCells
     % validation set
     mov = loadimfile(celldata(ii).fullvalstimfile);
     [DIM1,DIM2,numFrames] = size(mov);
-    temp = imresize(meanIm,DIM1/DIM);
-
+    
+    meanIm = imresize(meanIm,DIM1/DIM);
     for jj=1:numFrames
-        mov(:,:,jj) = mov(:,:,jj) - temp;
+        mov(:,:,jj) = mov(:,:,jj) - meanIm;
     end
     prediction(ii).cellid = celldata(ii).cellid;
     
@@ -151,7 +163,7 @@ parfor ii=1:numCells
     for jj=1:numFrames
         for kk=1:numBack
             if jj-kk-2 < 1
-                temp = centerMean.*ones(DIM1,DIM2);
+                temp = zeros(DIM1,DIM2);
             else
                 temp = mov(:,:,max(jj-kk-2,1));
             end
@@ -165,11 +177,11 @@ parfor ii=1:numCells
         dctMov(jj,:) = R(:);
     end
     dctMov = dctMov';
-    mu2 = mean(dctMov,2);
+  %  mu2 = mean(dctMov,2);
     dctMov = dctMov-repmat(mu,[1,numFrames]);
     x = Winv*dctMov;
     reduceDctData = x'; % N-by
-    prediction(ii).response = max(reduceDctData*fullRF+responseMean,0);
+    prediction(ii).response = exp(b(1)+reduceDctData*b(2:end));
 end
 
 save('ASD_PredictionsSTRF_DCTPCA.mat','prediction');
