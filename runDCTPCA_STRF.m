@@ -1,12 +1,15 @@
 % runDCTPCA_STRF.m
+warning('off','all');
 
 cellinfo
 
 numCells = length(celldata);
 
-prediction = struct('cellid',cell(numCells,1),'response',zeros(713,1));
-rfs = struct('RF',cell(numCells,1),'ToSubtract',cell(numCells,1),...
-    'Corr',cell(numCells,1),'MeanFiring',cell(numCells,1),'prefDIM',cell(numCells,1));
+prediction1 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
+prediction2 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
+rfs = struct('RFdev',cell(numCells,1),'RFaic',cell(numCells,1),'ToSubtract',cell(numCells,1),...
+    'CorrDev',cell(numCells,1),'MeanFiring',cell(numCells,1),'devInds',cell(numCells,1),...
+    'CorrAIC',cell(numCells,1),'aicInds',cell(numCells,1));
 
 neuralResponse = cell(numCells,1);
 for ii=1:numCells
@@ -14,18 +17,28 @@ for ii=1:numCells
     neuralResponse{ii} = resp;
 end
 
-myCluster = parcluster('local');
+% myCluster = parcluster('local');
+% 
+% if getenv('ENVIRONMENT')
+%    myCluster.JobStorageLocation = getenv('TMPDIR');
+% end
+% 
+% parpool(myCluster,12);
 
-if getenv('ENVIRONMENT')
-   myCluster.JobStorageLocation = getenv('TMPDIR');
-end
-
-parpool(myCluster,12);
-
-parfor ii=1:numCells
+for ii=1:numCells
     resp = neuralResponse{ii};
-    inds = find(~isnan(resp));
-    newResp = resp(~isnan(resp));
+    
+    histLags = 15;
+    histDesign = zeros(length(resp),histLags);
+    temp = resp;
+    for jj=1:histLags
+       temp = [0;temp(1:end-1)];
+       histDesign(:,jj) = temp;
+    end
+    
+    inds = find(~isnan(sum(histDesign,2)) & ~isnan(resp));
+    newResp = resp(inds);
+    histDesign = histDesign(inds,:);
     numFrames = length(newResp);
     mov = loadimfile(celldata(ii).fullstimfile);
     
@@ -38,68 +51,116 @@ parfor ii=1:numCells
     responseMean = mean(newResp);
     newResp = newResp-mean(newResp);
    
-    numBack = 25;
+    numBack = 30;
     
-    dctDim = [50,50,6];
-    fullDctDim = prod(dctDim);
+    % get transition and history model / basis functions
+    corrs = zeros(fullFrames,1);
+    for jj=2:fullFrames
+        prevFrame = mov(:,:,jj-1);
+        currentFrame = mov(:,:,jj);
+        r = corrcoef(prevFrame(:),currentFrame(:));
+        corrs(jj) = r(1,2);
+    end
+    transitionInds = corrs<0.95;
+    transDesign = zeros(fullFrames,numBack);
+    temp = double(transitionInds);
+    for jj=0:numBack-1
+        forcorr = temp(1:end-jj);
+        transDesign(:,jj+1) = forcorr;
+        temp = [0;temp];
+    end
+    
+    transDesign = transDesign(inds,2:end);
+    [~,timePoints] = size(transDesign);
+    
+    transBases = 10;histBases = 5;
+    transdev = 1.75;histdev = 1.75;
+    
+    histBasisFuns = zeros(histLags,histBases);
+    time = linspace(0,histLags-1,histLags);
+    centerPoints = linspace(0,histLags-1,histBases);
+    for kk=1:histBases
+        histBasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*histdev*histdev));
+    end
+    
+    transBasisFuns = zeros(timePoints,transBases);
+    time = linspace(0,timePoints-1,timePoints);
+    centerPoints = linspace(0,timePoints-1,transBases);
+    for kk=1:transBases
+        transBasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*transdev*transdev));
+    end
+    
+    dimRun = [90,80,70,60,50,40,30,20,10,ones(1,numBack-8).*5];
+    dctDims = zeros(DIM,DIM,numBack);
+    for jj=1:numBack
+        currentDim = min(DIM,dimRun(jj));
+        temp = ones(currentDim,currentDim);
+        dctDims(1:currentDim,1:currentDim,jj) = temp;
+    end
+    fullDctDim = sum(dctDims(:));dctDims = find(dctDims);
     dctMov = zeros(numFrames,fullDctDim);
     
-    centerMean = mean(mean(mean(mov(20:50,20:50,:))));
     count = 1;
     for jj=inds'
         miniMov = zeros(DIM,DIM,numBack);
         for kk=1:numBack
             if jj-kk-2 < 1
-                temp = centerMean.*ones(DIM,DIM);
+                temp = zeros(DIM,DIM);
             else
                 temp = mov(:,:,max(jj-kk-2,1));
             end
             miniMov(:,:,kk) = temp;
         end
         R = mirt_dctn(miniMov);
-        R = R(1:dctDim(1),1:dctDim(2),1:dctDim(3));
+        R = R(dctDims);
         dctMov(count,:) = R(:);
         count = count+1;
     end
     
     S = cov(dctMov); % or try shrinkage_cov
     % S = shrinkage_cov(dctMov);
-    [V,D] = eig(S);
+    [V,D] = eig(S);clear S;
     
     dctMov = dctMov';
     mu = mean(dctMov,2);
     dctMov = dctMov-repmat(mu,[1,numFrames]);
     
-    saveVar = 0.7:0.01:0.99;saveVar = [saveVar,0.991:0.001:0.995];
-    varLen = length(saveVar);
-    holdOutCorr = zeros(varLen,2);
-    
-    for yy=1:varLen
-        % choose dimensionality for dct images
-        allEigs = diag(D);
-        fullVariance = sum(allEigs);
-        for jj=5:1:fullDctDim-10
-            start = fullDctDim-jj+1;
-            eigenvals = allEigs(start:end);
-            varianceProp = sum(eigenvals)/fullVariance;
-            if varianceProp >= saveVar(yy)
-                break;
-            end
+    allEigs = diag(D);
+    fullVariance = sum(allEigs);
+    for jj=100:1:fullDctDim-10
+        start = fullDctDim-jj+1;
+        eigenvals = allEigs(start:end);
+        varianceProp = sum(eigenvals)/fullVariance;
+        if varianceProp >= 0.995
+            break;
         end
+    end
+    
+    Q = jj;
+    meanEig = mean(allEigs(1:start-1));
+    W = V(:,start:end)*sqrtm(D(start:end,start:end)-meanEig.*eye(Q));
+    clear V D;
+    W = fliplr(W);
+    Winv = pinv(W);
+    x = Winv*dctMov; % number of dimensions kept by N
+    reduceDctData = x';
+    
+    [fullB,~,~] = glmfit([transDesign*transBasisFuns,histDesign*histBasisFuns,...
+        reduceDctData],newResp+responseMean,'poisson');
+    
+    transInds = 2:transBases+1;histInds = transBases+2:length(fullB)-Q;
+    pcaInds = (length(fullB)-Q+1):1:length(fullB);
+    pcaB = fullB(pcaInds);
+   
+    indsToKeep = (1:5:Q)./Q;indLen = length(indsToKeep);
+    holdOutDev = zeros(indLen,2);
+    for yy=1:indLen
+        myquant = quantile(abs(pcaB),1-indsToKeep(yy));
+        newBinds = abs(pcaB)>=myquant;
         
-        q = jj;
-        holdOutCorr(yy,2) = q;
-        meanEig = mean(allEigs(1:start-1));
-        W = V(:,start:end)*sqrtm(D(start:end,start:end)-meanEig.*eye(q));
-        W = fliplr(W);
-       
-        x = pinv(W)*dctMov; % number of dimensions kept by N
-        
-        reduceDctData = x'; % N-by-however-many-dimensions are kept
-        
-        numIter = 5;
-        train = round(numFrames.*0.8);test = numFrames-train;
-        tempHoldOut = zeros(numIter,1);
+        numIter = 250;
+        train = round(numFrames.*0.7);test = numFrames-train;
+        tempHoldOut = zeros(numIter,2);
         allInds = 1:numFrames;
         for zz=1:numIter
             inds = randperm(numFrames,train);
@@ -107,45 +168,56 @@ parfor ii=1:numCells
             holdOutInds = ~inds;
             
            % estFilt = reduceDctData(inds,:)\newResp(inds);
-            [b,~,~] = glmfit(reduceDctData(inds,:),newResp(inds)+responseMean,'poisson');
+            [b,~,~] = glmfit([transDesign(inds,:)*transBasisFuns,histDesign(inds,:)*histBasisFuns,...
+                reduceDctData(inds,newBinds)],newResp(inds)+responseMean,'poisson');
             
             y = newResp(holdOutInds)+responseMean;
-            nullEst = ones(test,1).*mean(y);
-            initialDev = y.*log(y./nullEst)-(y-nullEst);
-            initialDev(isnan(initialDev) | isinf(initialDev)) = nullEst(isnan(initialDev) | isinf(initialDev));
-            nullDev = 2*sum(initialDev);
             
-            estimate = exp(b(1)+reduceDctData(holdOutInds,:)*b(2:end));
+            estimate = exp(b(1)+transDesign(holdOutInds,:)*transBasisFuns*b(transInds)+...
+                histDesign(holdOutInds,:)*histBasisFuns*b(histInds)+reduceDctData(holdOutInds,newBinds)*b(pcaInds));
             initialDev = y.*log(y./estimate)-(y-estimate);
             initialDev(isnan(initialDev) | isinf(initialDev)) = estimate(isnan(initialDev) | isinf(initialDev));
             modelDev = 2*sum(initialDev);
-            tempHoldOut(zz) = 1-modelDev/nullDev;
+            tempHoldOut(zz,1) = modelDev;
+            tempHoldOut(zz,2) = 2*length(b)+modelDev;
         end
-        holdOutCorr(yy,1) = median(tempHoldOut);
+        holdOutDev(yy,1) = median(tempHoldOut(:,1));
+        holdOutDev(yy,2) = median(tempHoldOut(:,2));
     end
-    [~,ind] = max(holdOutCorr(:,1));
-    prefDim = holdOutCorr(ind,2);
+    [~,ind1] = min(holdOutDev(:,1));
+    [~,ind2] = min(holdOutDev(:,2));
+    myquant = quantile(abs(pcaB),1-indsToKeep(ind1));
+    newBinds1 = abs(pcaB)>myquant;
     
-    start = fullDctDim-prefDim+1;
-    meanEig = mean(allEigs(1:start-1));
-    W = V(:,start:end)*sqrtm(D(start:end,start:end)-meanEig.*eye(prefDim));
-    W = fliplr(W);
-    Winv = pinv(W);
-    x = Winv*dctMov;
+    myquant = quantile(abs(pcaB),1-indsToKeep(ind2));
+    newBinds2 = abs(pcaB)>myquant;
     
-    reduceDctData = x'; % N-by
+    [b1,~,~] = glmfit([transDesign*transBasisFuns,histDesign*histBasisFuns,...
+                reduceDctData(:,newBinds1)],newResp+responseMean,'poisson');
+            
+    [b2,~,~] = glmfit([transDesign*transBasisFuns,histDesign*histBasisFuns,...
+                reduceDctData(:,newBinds2)],newResp+responseMean,'poisson');
     
-    [b,~,~] = glmfit(reduceDctData,newResp+responseMean,'poisson');
-    r = corrcoef(exp(b(1)+reduceDctData*b(2:end)),newResp);
+    estimate = exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
+                histDesign*histBasisFuns*b1(histInds)+reduceDctData(:,newBinds1)*b1(pcaInds));
+    r1 = corrcoef(estimate,newResp+responseMean);
     
-    fprintf('\nCorrelation: %3.3f\n\n\n',r(1,2));
+    estimate = exp(b2(1)+transDesign*transBasisFuns*b2(transInds)+...
+                histDesign*histBasisFuns*b2(histInds)+reduceDctData(:,newBinds2)*b2(pcaInds));
+    r2 = corrcoef(estimate,newResp+responseMean);
+    
+    fprintf('\nCorrelation Dev: %3.3f\n\n\n',r1(1,2));
+    fprintf('\nCorrelation AIC: %3.3f\n\n\n',r2(1,2));
     pause(1);
     
-    rfs(ii).RF = b;
+    rfs(ii).RFdev = b1;
+    rfs(ii).RFaic = b2;
     rfs(ii).MeanFiring = responseMean;
     rfs(ii).ToSubtract = mu;
-    rfs(ii).Corr = r(1,2);
-    rfs(ii).prefDIM = prefDim;
+    rfs(ii).CorrDev = r1(1,2);
+    rfs(ii).CorrAIC = r2(1,2);
+    rfs(ii).devInds = newBinds1;
+    rfs(ii).aicInds = newBinds2;
     
     % validation set
     mov = loadimfile(celldata(ii).fullvalstimfile);
@@ -155,7 +227,8 @@ parfor ii=1:numCells
     for jj=1:numFrames
         mov(:,:,jj) = mov(:,:,jj) - meanIm;
     end
-    prediction(ii).cellid = celldata(ii).cellid;
+    prediction1(ii).cellid = celldata(ii).cellid;
+    prediction2(ii).cellid = celldata(ii).cellid;
     
     dctMov = zeros(numFrames,fullDctDim);
     
@@ -173,7 +246,7 @@ parfor ii=1:numCells
             miniMov(:,:,kk) = temp;
         end
         R = mirt_dctn(miniMov);
-        R = R(1:dctDim(1),1:dctDim(2),1:dctDim(3));
+        R = R(dctDims);
         dctMov(jj,:) = R(:);
     end
     dctMov = dctMov';
@@ -181,10 +254,48 @@ parfor ii=1:numCells
     dctMov = dctMov-repmat(mu,[1,numFrames]);
     x = Winv*dctMov;
     reduceDctData = x'; % N-by
-    prediction(ii).response = exp(b(1)+reduceDctData*b(2:end));
+    
+    [~,~,trueFrames] = size(mov);
+    corrs = zeros(trueFrames,1);
+    for jj=2:trueFrames
+        prevFrame = mov(:,:,jj-1);
+        currentFrame = mov(:,:,jj);
+        r = corrcoef(prevFrame(:),currentFrame(:));
+        corrs(jj) = r(1,2);
+    end
+    transitionInds = corrs<0.95;
+    
+    transDesign = zeros(trueFrames,numBack);
+    temp = double(transitionInds);
+    for jj=0:numBack-1
+        forcorr = temp(1:end-jj);
+        transDesign(:,jj+1) = forcorr;
+        temp = [0;temp];
+    end
+    transDesign = transDesign(:,2:end);
+            
+    numIter = 5000;
+    estResponse1 = zeros(trueFrames,numIter);
+    estResponse2 = zeros(trueFrames,numIter);
+    for jj=1:numIter
+        currentHist1 = poissrnd(exp(b1(1)),[1,histLags]);
+        currentHist2 = poissrnd(exp(b2(1)),[1,histLags]);
+        for kk=1:trueFrames
+            estResponse1(kk,jj) = poissrnd(exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
+                currentHist1*histBasisFuns*b1(histInds)+reduceDctData(:,newBinds1)*b1(pcaInds)));
+            currentHist1 = [estResponse1(kk,jj),currentHist1(1:end-1)];
+            
+            estResponse2(kk,jj) = poissrnd(exp(b2(1)+transDesign*transBasisFuns*b2(transInds)+...
+                currentHist2*histBasisFuns*b2(histInds)+reduceDctData(:,newBinds2)*b2(pcaInds)));
+            currentHist2 = [estResponse2(kk,jj),currentHist2(1:end-1)];
+        end
+    end
+    
+    prediction1(ii).response = mean(estResponse1,2);
+    prediction2(ii).response = mean(estResponse2,2);
 end
 
-save('ASD_PredictionsSTRF_DCTPCA.mat','prediction');
+save('ASD_PredictionsSTRF_DCTPCA.mat','prediction1','prediction2');
 save('ASD_STRFs_DCTPCA.mat','rfs');
 
-delete(gcp);
+% delete(gcp);
