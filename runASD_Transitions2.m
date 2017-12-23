@@ -3,6 +3,7 @@ cellinfo
 numCells = length(celldata);
 fprintf('Number of Cells: %d\n',numCells);
 prediction = struct('cellid',cell(numCells,1),'response',zeros(713,1));
+prediction2 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
 rfs = struct('History',cell(numCells,1),'Transition',cell(numCells,1));
 
 neuralResponse = cell(numCells,1);
@@ -14,7 +15,7 @@ end
 parfor ii=1:numCells
     resp = neuralResponse{ii};
     
-    histLags = 15;
+    histLags = 30;
     histDesign = zeros(length(resp),histLags);
     temp = resp;
     for jj=1:histLags
@@ -50,12 +51,10 @@ parfor ii=1:numCells
     
     numBack = 30;transDesign = zeros(trueFrames,numBack);
     temp = double(transitionInds);
-    corrPattern = zeros(numBack,1);
     for jj=0:numBack-1
         forcorr = temp(1:end-jj);
         transDesign(:,jj+1) = forcorr;
-        r = corrcoef(newResp,forcorr(inds));
-        corrPattern(jj+1) = r(1,2);
+        %r = corrcoef(newResp,forcorr(inds));
         temp = [0;temp];
     end
     
@@ -70,11 +69,11 @@ parfor ii=1:numCells
     transDesign = transDesign(inds,2:end);
     [~,timePoints] = size(transDesign);
     
-    transBases = 10;histBases = 5;
-    tranStdevs = 1:0.1:3;histStdevs = 1:0.1:3;
-    numIter = 250;
+    transBases = 10;histBases = 10;
+    tranStdevs = 1:0.1:4;histStdevs = 1:0.1:4;
+    numIter = 200;
     holdOutDev = zeros(length(tranStdevs),length(histStdevs));
-    allInds = 1:numFrames;cvLen = round(numFrames*0.7);testLen = numFrames-cvLen;
+    allInds = 1:numFrames;cvLen = round(numFrames*0.7);
     for jj=1:length(tranStdevs)
         transbasisFuns = zeros(timePoints,transBases);
         time = linspace(0,timePoints-1,timePoints);
@@ -142,6 +141,7 @@ parfor ii=1:numCells
     mov = loadimfile(celldata(ii).fullvalstimfile);
     
     prediction(ii).cellid = celldata(ii).cellid;
+    prediction2(ii).cellid = celldata(ii).cellid;
     
     [~,~,trueFrames] = size(mov);
     corrs = zeros(trueFrames,1);
@@ -151,7 +151,7 @@ parfor ii=1:numCells
         r = corrcoef(prevFrame(:),currentFrame(:));
         corrs(jj) = r(1,2);
     end
-    transitionInds = corrs<0.95;
+    transitionInds = 1-corrs;
     
     transDesign = zeros(trueFrames,numBack);
     temp = double(transitionInds);
@@ -173,8 +173,10 @@ parfor ii=1:numCells
             currentHist = [estResponse(kk,jj),currentHist(1:end-1)];
         end
     end
-    prediction(ii).response = mean(estResponse,2);
+    prediction(ii).response = median(estResponse,2);
+    prediction2(ii).response = exp(b(1)+transDesign*...
+                transbasisFuns*b(2:transBases+1));
 end
 
-save('ASD_Predictions_Transitions.mat','prediction');
-save('ASD_Transitions.mat','rfs');
+save('Predictions_Transitions.mat','prediction');
+save('Transitions.mat','rfs','prediction2');
