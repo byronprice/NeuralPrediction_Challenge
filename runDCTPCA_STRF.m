@@ -174,7 +174,7 @@ for ii=1:numCells
             y = newResp(holdOutInds)+responseMean;
             
             estimate = exp(b(1)+transDesign(holdOutInds,:)*transBasisFuns*b(transInds)+...
-                histDesign(holdOutInds,:)*histBasisFuns*b(histInds)+reduceDctData(holdOutInds,newBinds)*b(pcaInds));
+                histDesign(holdOutInds,:)*histBasisFuns*b(histInds)+reduceDctData(holdOutInds,newBinds)*b(histInds(end)+1:end));
             initialDev = y.*log(y./estimate)-(y-estimate);
             initialDev(isnan(initialDev) | isinf(initialDev)) = estimate(isnan(initialDev) | isinf(initialDev));
             modelDev = 2*sum(initialDev);
@@ -199,11 +199,11 @@ for ii=1:numCells
                 reduceDctData(:,newBinds2)],newResp+responseMean,'poisson');
     
     estimate = exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
-                histDesign*histBasisFuns*b1(histInds)+reduceDctData(:,newBinds1)*b1(pcaInds));
+                histDesign*histBasisFuns*b1(histInds)+reduceDctData(:,newBinds1)*b1(histInds(end)+1:end));
     r1 = corrcoef(estimate,newResp+responseMean);
     
     estimate = exp(b2(1)+transDesign*transBasisFuns*b2(transInds)+...
-                histDesign*histBasisFuns*b2(histInds)+reduceDctData(:,newBinds2)*b2(pcaInds));
+                histDesign*histBasisFuns*b2(histInds)+reduceDctData(:,newBinds2)*b2(histInds(end)+1:end));
     r2 = corrcoef(estimate,newResp+responseMean);
     
     fprintf('\nCorrelation Dev: %3.3f\n\n\n',r1(1,2));
@@ -282,11 +282,11 @@ for ii=1:numCells
         currentHist2 = poissrnd(exp(b2(1)),[1,histLags]);
         for kk=1:trueFrames
             estResponse1(kk,jj) = poissrnd(exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
-                currentHist1*histBasisFuns*b1(histInds)+reduceDctData(:,newBinds1)*b1(pcaInds)));
+                currentHist1*histBasisFuns*b1(histInds)+reduceDctData(:,newBinds1)*b1(histInds(end)+1:end)));
             currentHist1 = [estResponse1(kk,jj),currentHist1(1:end-1)];
             
             estResponse2(kk,jj) = poissrnd(exp(b2(1)+transDesign*transBasisFuns*b2(transInds)+...
-                currentHist2*histBasisFuns*b2(histInds)+reduceDctData(:,newBinds2)*b2(pcaInds)));
+                currentHist2*histBasisFuns*b2(histInds)+reduceDctData(:,newBinds2)*b2(histInds(end)+1:end)));
             currentHist2 = [estResponse2(kk,jj),currentHist2(1:end-1)];
         end
     end

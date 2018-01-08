@@ -11,7 +11,7 @@ for ii=1:numCells
     neuralResponse{ii} = resp;
 end
     
-parfor ii=1:numCells
+for ii=1:numCells
     resp = neuralResponse{ii};
     
     histLags = 15;
