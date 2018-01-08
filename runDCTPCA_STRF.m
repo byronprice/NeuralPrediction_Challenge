@@ -7,6 +7,8 @@ numCells = length(celldata);
 
 prediction1 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
 prediction2 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
+prediction3 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
+prediction4 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
 rfs = struct('RFdev',cell(numCells,1),'RFaic',cell(numCells,1),'ToSubtract',cell(numCells,1),...
     'CorrDev',cell(numCells,1),'MeanFiring',cell(numCells,1),'devInds',cell(numCells,1),...
     'CorrAIC',cell(numCells,1),'aicInds',cell(numCells,1));
@@ -28,7 +30,7 @@ end
 for ii=1:numCells
     resp = neuralResponse{ii};
     
-    histLags = 15;
+    histLags = 30;
     histDesign = zeros(length(resp),histLags);
     temp = resp;
     for jj=1:histLags
@@ -73,8 +75,8 @@ for ii=1:numCells
     transDesign = transDesign(inds,2:end);
     [~,timePoints] = size(transDesign);
     
-    transBases = 10;histBases = 5;
-    transdev = 1.75;histdev = 1.75;
+    transBases = 10;histBases = 10;
+    transdev = 2;histdev = 1.75;
     
     histBasisFuns = zeros(histLags,histBases);
     time = linspace(0,histLags-1,histLags);
@@ -174,7 +176,9 @@ for ii=1:numCells
             y = newResp(holdOutInds)+responseMean;
             
             estimate = exp(b(1)+transDesign(holdOutInds,:)*transBasisFuns*b(transInds)+...
-                histDesign(holdOutInds,:)*histBasisFuns*b(histInds)+reduceDctData(holdOutInds,newBinds)*b(histInds(end)+1:end));
+                histDesign(holdOutInds,:)*histBasisFuns*b(histInds)+...
+                reduceDctData(holdOutInds,newBinds)*b(histInds(end)+1:end));
+            
             initialDev = y.*log(y./estimate)-(y-estimate);
             initialDev(isnan(initialDev) | isinf(initialDev)) = estimate(isnan(initialDev) | isinf(initialDev));
             modelDev = 2*sum(initialDev);
@@ -229,6 +233,8 @@ for ii=1:numCells
     end
     prediction1(ii).cellid = celldata(ii).cellid;
     prediction2(ii).cellid = celldata(ii).cellid;
+    prediction3(ii).cellid = celldata(ii).cellid;
+    prediction4(ii).cellid = celldata(ii).cellid;
     
     dctMov = zeros(numFrames,fullDctDim);
     
@@ -281,21 +287,27 @@ for ii=1:numCells
         currentHist1 = poissrnd(exp(b1(1)),[1,histLags]);
         currentHist2 = poissrnd(exp(b2(1)),[1,histLags]);
         for kk=1:trueFrames
-            estResponse1(kk,jj) = poissrnd(exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
-                currentHist1*histBasisFuns*b1(histInds)+reduceDctData(:,newBinds1)*b1(histInds(end)+1:end)));
+
+            estResponse1(kk,jj) = poissrnd(exp(b1(1)+transDesign(kk,:)*transBasisFuns*b1(transInds)+...
+                currentHist1*histBasisFuns*b1(histInds)+reduceDctData(kk,newBinds1)*b1(histInds(end)+1:end)));
             currentHist1 = [estResponse1(kk,jj),currentHist1(1:end-1)];
             
-            estResponse2(kk,jj) = poissrnd(exp(b2(1)+transDesign*transBasisFuns*b2(transInds)+...
-                currentHist2*histBasisFuns*b2(histInds)+reduceDctData(:,newBinds2)*b2(histInds(end)+1:end)));
+            estResponse2(kk,jj) = poissrnd(exp(b2(1)+transDesign(kk,:)*transBasisFuns*b2(transInds)+...
+                currentHist2*histBasisFuns*b2(histInds)+reduceDctData(kk,newBinds2)*b2(histInds(end)+1:end)));
+
             currentHist2 = [estResponse2(kk,jj),currentHist2(1:end-1)];
         end
     end
     
-    prediction1(ii).response = mean(estResponse1,2);
-    prediction2(ii).response = mean(estResponse2,2);
+    prediction1(ii).response = median(estResponse1,2);
+    prediction2(ii).response = median(estResponse2,2);
+    prediction3(ii).response = exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
+                reduceDctData(:,newBinds1)*b1(histInds(end)+1:end));
+    prediction4(ii).response = exp(b2(1)+transDesign*transBasisFuns*b2(transInds)+...
+                reduceDctData(:,newBinds2)*b2(histInds(end)+1:end));
 end
 
-save('ASD_PredictionsSTRF_DCTPCA.mat','prediction1','prediction2');
+save('ASD_PredictionsSTRF_DCTPCA.mat','prediction1','prediction2','prediction3','prediction4');
 save('ASD_STRFs_DCTPCA.mat','rfs');
 
 % delete(gcp);
