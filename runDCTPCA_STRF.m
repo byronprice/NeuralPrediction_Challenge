@@ -92,7 +92,7 @@ for ii=1:numCells
         transBasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*transdev*transdev));
     end
     
-    dimRun = [90,80,70,60,50,40,30,20,10,ones(1,numBack-8).*5];
+    dimRun = [90,80,70,60,50,40,30,20,10.*ones(1,numBack-8)];
     dctDims = zeros(DIM,DIM,numBack);
     for jj=1:numBack
         currentDim = min(DIM,dimRun(jj));
@@ -133,12 +133,12 @@ for ii=1:numCells
         start = fullDctDim-jj+1;
         eigenvals = allEigs(start:end);
         varianceProp = sum(eigenvals)/fullVariance;
-        if varianceProp >= 0.995
+        if varianceProp >= 0.99
             break;
         end
     end
     
-    Q = jj;
+    Q = jj;fprintf('Full Dimensionality: %d\n\n',Q);
     meanEig = mean(allEigs(1:start-1));
     W = V(:,start:end)*sqrtm(D(start:end,start:end)-meanEig.*eye(Q));
     clear V D;
@@ -154,13 +154,14 @@ for ii=1:numCells
     pcaInds = (length(fullB)-Q+1):1:length(fullB);
     pcaB = fullB(pcaInds);
    
-    indsToKeep = (1:5:Q)./Q;indLen = length(indsToKeep);
+    indsToKeep = (1:5:Q-5)./Q;indLen = length(indsToKeep);
     holdOutDev = zeros(indLen,2);
     for yy=1:indLen
+	fprintf('Iteration %d of %d\n',yy,indLen);
         myquant = quantile(abs(pcaB),1-indsToKeep(yy));
         newBinds = abs(pcaB)>=myquant;
         
-        numIter = 250;
+        numIter = 200;
         train = round(numFrames.*0.7);test = numFrames-train;
         tempHoldOut = zeros(numIter,2);
         allInds = 1:numFrames;
@@ -176,9 +177,7 @@ for ii=1:numCells
             y = newResp(holdOutInds)+responseMean;
             
             estimate = exp(b(1)+transDesign(holdOutInds,:)*transBasisFuns*b(transInds)+...
-                histDesign(holdOutInds,:)*histBasisFuns*b(histInds)+...
-                reduceDctData(holdOutInds,newBinds)*b(histInds(end)+1:end));
-            
+                histDesign(holdOutInds,:)*histBasisFuns*b(histInds)+reduceDctData(holdOutInds,newBinds)*b(histInds(end)+1:end));
             initialDev = y.*log(y./estimate)-(y-estimate);
             initialDev(isnan(initialDev) | isinf(initialDev)) = estimate(isnan(initialDev) | isinf(initialDev));
             modelDev = 2*sum(initialDev);
@@ -235,7 +234,7 @@ for ii=1:numCells
     prediction2(ii).cellid = celldata(ii).cellid;
     prediction3(ii).cellid = celldata(ii).cellid;
     prediction4(ii).cellid = celldata(ii).cellid;
-    
+
     dctMov = zeros(numFrames,fullDctDim);
     
     miniMov = zeros(DIM,DIM,numBack);
@@ -287,21 +286,19 @@ for ii=1:numCells
         currentHist1 = poissrnd(exp(b1(1)),[1,histLags]);
         currentHist2 = poissrnd(exp(b2(1)),[1,histLags]);
         for kk=1:trueFrames
-
             estResponse1(kk,jj) = poissrnd(exp(b1(1)+transDesign(kk,:)*transBasisFuns*b1(transInds)+...
                 currentHist1*histBasisFuns*b1(histInds)+reduceDctData(kk,newBinds1)*b1(histInds(end)+1:end)));
             currentHist1 = [estResponse1(kk,jj),currentHist1(1:end-1)];
             
             estResponse2(kk,jj) = poissrnd(exp(b2(1)+transDesign(kk,:)*transBasisFuns*b2(transInds)+...
                 currentHist2*histBasisFuns*b2(histInds)+reduceDctData(kk,newBinds2)*b2(histInds(end)+1:end)));
-
             currentHist2 = [estResponse2(kk,jj),currentHist2(1:end-1)];
         end
     end
     
     prediction1(ii).response = median(estResponse1,2);
     prediction2(ii).response = median(estResponse2,2);
-    prediction3(ii).response = exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
+    prediciton3(ii).response = exp(b1(1)+transDesign*transBasisFuns*b1(transInds)+...
                 reduceDctData(:,newBinds1)*b1(histInds(end)+1:end));
     prediction4(ii).response = exp(b2(1)+transDesign*transBasisFuns*b2(transInds)+...
                 reduceDctData(:,newBinds2)*b2(histInds(end)+1:end));
