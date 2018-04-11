@@ -51,25 +51,29 @@ for ii=1:numCells
     
     histDesign = histDesign*histBasisFuns;
      
-    [predictTrain,trueTrain,expDev,b,Q] = DCTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
-    save(sprintf('Cell%d_DCT.mat',ii),'predictTrain','trueTrain','expDev','b','Q','histDesign','histBasisFuns');
+    [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = DCTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
+    save(sprintf('Cell%d_DCT.mat',ii),'predictTrain','trueTrain','expDev',...
+        'b','Q','histDesign','histBasisFuns','mu','Winv');
     fprintf('Cell: %d - DCT Explain Dev: %3.1f\n',ii,expDev);
     
-    [predictTrain,trueTrain,expDev,b,Q] = WVLTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
-    save(sprintf('Cell%d_WVLT.mat',ii),'predictTrain','trueTrain','expDev','b','Q','histDesign','histBasisFuns');
+    [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = WVLTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
+    save(sprintf('Cell%d_WVLT.mat',ii),'predictTrain','trueTrain','expDev',...
+        'b','Q','histDesign','histBasisFuns','mu','Winv');
     fprintf('Cell: %d - WVLT Explain Dev: %3.1f\n',ii,expDev);
     
-    [predictTrain,trueTrain,expDev,b,Q] = DCTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
-    save(sprintf('Cell%d_DCTOAS.mat',ii),'predictTrain','trueTrain','expDev','b','Q','histDesign','histBasisFuns');
+    [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = DCTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
+    save(sprintf('Cell%d_DCTOAS.mat',ii),'predictTrain','trueTrain','expDev',...
+        'b','Q','histDesign','histBasisFuns','mu','Winv');
     fprintf('Cell: %d - DCT-OAS Explain Dev: %3.1f\n',ii,expDev);
     
-    [predictTrain,trueTrain,expDev,b,Q] = WVLTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
-    save(sprintf('Cell%d_WVLTOAS.mat',ii),'predictTrain','trueTrain','expDev','b','Q','histDesign','histBasisFuns');
+    [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = WVLTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train);
+    save(sprintf('Cell%d_WVLTOAS.mat',ii),'predictTrain','trueTrain','expDev',...
+        'b','Q','histDesign','histBasisFuns','mu','Winv');
     fprintf('Cell: %d - WVLT-OAS Explain Dev: %3.1f\n',ii,expDev);
 end
 end
 
-function [predictTrain,trueTrain,expDev,b,Q] = DCTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
+function [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = DCTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
 % DCT-PCA model
 dimRun = [90,80,70,60,50,40,30,20,10.*ones(1,numBack-8)];
 dctDims = zeros(DIM,DIM,numBack);
@@ -162,7 +166,7 @@ expDev = max(1-modelDev/nullDev,0);
 end
 
 
-function [predictTrain,trueTrain,expDev,b,Q] = WVLTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
+function [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = WVLTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
 % wavelet-PCA model
 miniMov = zeros(DIM,DIM,numBack);
 R = wavedec3(miniMov,1,'db4');
@@ -260,7 +264,7 @@ expDev = max(1-modelDev/nullDev,0);
 
 end
 
-function [predictTrain,trueTrain,expDev,b,Q] = DCTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
+function [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = DCTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
 % DCT-PCA model
 dimRun = [90,80,70,60,50,40,30,20,10.*ones(1,numBack-8)];
 dctDims = zeros(DIM,DIM,numBack);
@@ -352,7 +356,7 @@ nullDev = 2*sum(nullDev);
 expDev = max(1-modelDev/nullDev,0);
 end
 
-function [predictTrain,trueTrain,expDev,b,Q] = WVLTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
+function [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = WVLTOASModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
 % wavelet-PCA model
 miniMov = zeros(DIM,DIM,numBack);
 R = wavedec3(miniMov,1,'db4');
