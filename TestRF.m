@@ -1,7 +1,7 @@
 function [] = TestRF()
 warning('off','all');
 
-train = 0.7;
+train = 0.8;
 
 cellinfo
 
@@ -132,37 +132,105 @@ reduceDctData = x';
 
 trainN = round(length(newResp).*train);
 
-testPCAdims = unique(round(linspace(0,Q,20)));
-AIC = zeros(length(testPCAdims),1);
-allB = cell(length(testPCAdims),1);
+[b] = SGD(histDesign(1:trainN,:),reduceDctData(1:trainN,1:Q),newResp(1:trainN));
 
-count = 1;
-for ii=testPCAdims
-    [b,dev,~] = glmfit([histDesign(1:trainN,:),...
-            reduceDctData(1:trainN,1:ii)],newResp(1:trainN),'poisson');
-    AIC(count) = dev+2*length(b);
-    allB{count} = b;
-    count = count+1;
-end
-
-[~,ind] = min(AIC);
-
-b = allB{ind};Q = testPCAdims(ind);
 numHistParams = size(histDesign,2);
 
-predictTrain = exp(b(1)+reduceDctData(trainN+1:end,1:Q)*b(2+numHistParams:end));
+predictTrain = GetModelSmall(reduceDctData(trainN+1:end,1:Q),b,numHistParams);
 trueTrain = newResp(trainN+1:end);
 
-initialDev = trueTrain.*log(trueTrain./predictTrain)-(trueTrain-predictTrain);
-initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
-modelDev = 2*sum(initialDev);
+modelDev = GetDeviance(trueTrain,predictTrain);
 
 nullEst = mean(trueTrain).*ones(length(trueTrain),1);
-nullDev = trueTrain.*log(trueTrain./nullEst)-(trueTrain-nullEst);
-nullDev(isnan(nullDev) | isinf(nullDev)) = nullEst(isnan(nullDev) | isinf(nullDev));
-nullDev = 2*sum(nullDev);
+nullDev = GetDeviance(trueTrain,nullEst);
 
 expDev = max(1-modelDev/nullDev,0);
+end
+
+function [dev] = GetDeviance(trueTrain,predictTrain)
+initialDev = trueTrain.*log(trueTrain./predictTrain)-(trueTrain-predictTrain);
+initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
+dev = 2*sum(initialDev);
+end
+
+function [prediction] = GetModelFull(histDesign,reduceDesign,b,histParams)
+
+prediction = exp(b(1)+histDesign*b(2:histParams+1)+reduceDesign*b(histParams+2:end));
+
+end
+
+function [prediction] = GetModelSmall(reduceDesign,b,histParams)
+
+prediction = exp(b(1)+reduceDesign*b(histParams+2:end));
+
+end
+
+function [b] = SGD(histDesign,reduceDesign,newResp)
+trainN = round(0.8*length(newResp));
+
+[bInit,devInit,~] = glmfit([histDesign(1:trainN,:),reduceDesign(1:trainN,:)],...
+    newResp(1:trainN),'poisson');
+
+maxIter = 1e5;
+histParams = size(histDesign,2);
+lassoInds = histParams+2:length(bInit);
+
+numParams = length(lassoInds);
+
+onenorm = norm(bInit(lassoInds),1);
+penalty = ([0,1/1000,1/100,1/10,1,5,10,50,100].*devInit)./onenorm;
+
+numRuns = length(penalty);
+heldOutDev = zeros(numRuns,1);
+allB = cell(numRuns,1);
+
+getObjective = @(b,dev,penalty) (dev+norm(b,1)*penalty);
+
+allB{1} = bInit;
+prediction = GetModelSmall(reduceDesign(trainN+1,:),bInit,histParams);
+heldOutDev(1) = GetDeviance(newResp(trainN+1:end),prediction);
+for ii=2:numRuns
+   lambda = penalty(ii);
+   
+   b = bInit;
+   prediction = GetModelFull(histDesign(1:trainN,:),reduceDesign(1:trainN,:),b,histParams);
+   objective = getObjective(b(lassoInds),GetDeviance(newResp(1:trainN),prediction),lambda);
+   
+   iterB = zeros(maxIter,length(b));
+   iterObj = zeros(maxIter,1);
+   
+   iterObj(1) = objective;
+   iterB(1,:) = b;
+   for jj=2:maxIter
+       tempB = iterB(jj-1,:)';tempB2 = tempB(lassoInds);
+       inds = random('Discrete Uniform',numParams,[5,1]);
+       
+       tempB2(inds) = tempB2(inds) + normrnd(0,1,[5,1]);
+       tempB(lassoInds) = tempB2;
+       
+       prediction = GetModelFull(histDesign(1:trainN,:),reduceDesign(1:trainN,:),tempB,histParams);
+       tempobjective = getObjective(tempB(lassoInds),GetDeviance(newResp(1:trainN),prediction),lambda);
+       
+       logA = tempobjective-iterObj(jj-1);
+       if log(rand)<logA
+           iterObj(jj) = tempobjective;
+           iterB(jj,:) = tempB;
+       else
+           iterObj(jj) = iterObj(jj-1);
+           iterB(jj,:) = iterB(jj-1,:);
+       end
+   end
+   [~,ind] = min(iterObj);
+   
+   b = iterB(ind,:)';allB{ii} = b;
+   prediction = GetModelSmall(reduceDesign(trainN+1,:),b,histParams);
+   heldOutDev(ii) = GetDeviance(newResp(trainN+1:end),prediction);
+end
+
+[~,ind] = min(heldOutDev);
+b = allB{ind};
+
+fprintf('Best Penalty: %3.1f\n',penalty(ind));
 end
 
 
@@ -172,8 +240,8 @@ miniMov = zeros(DIM,DIM,numBack);
 R = wavedec3(miniMov,1,'db4');
 R = R.dec;R = R{1};
 
-fullWVLTDim = numel(R)*4;
-wvltMov = zeros(numFrames,fullWVLTDim);
+fullWVLTdim = numel(R)*4;
+wvltMov = zeros(numFrames,fullWVLTdim);
 
 count = 1;
 for jj=inds'
@@ -198,8 +266,12 @@ for jj=inds'
     count = count+1;
 end
 
-tempInds = var(wvltMov,[],1)>100;
+maxToKeep = 3.5e4;p = maxToKeep/fullWVLTdim;
+temp = var(wvltMov,[],1);
+Q = quantile(temp,1-p);
+tempInds = temp>=Q;
 wvltMov = wvltMov(:,tempInds);
+fullWVLTdim = size(wvltMov,2);
 S = cov(wvltMov); % or try shrinkage_cov
 % S = shrinkage_cov(dctMov);
 [V,D] = eig(S);clear S;
@@ -210,8 +282,8 @@ wvltMov = wvltMov-repmat(mu,[1,numFrames]);
 
 allEigs = diag(D);
 fullVariance = sum(allEigs);
-for jj=50:1:fullWVLTDim-10
-    start = fullWVLTDim-jj+1;
+for jj=50:1:fullWVLTdim-10
+    start = fullWVLTdim-jj+1;
     eigenvals = allEigs(start:end);
     varianceProp = sum(eigenvals)/fullVariance;
     if varianceProp >= 0.99
@@ -226,39 +298,21 @@ clear V D;
 W = fliplr(W);
 Winv = pinv(W);
 x = Winv*wvltMov; % number of dimensions kept by N
-reduceDctData = x';
+reduceWvltData = x';
 
 trainN = round(length(newResp).*train);
 
-testPCAdims = unique(round(linspace(0,Q,20)));
-AIC = zeros(length(testPCAdims),1);
-allB = cell(length(testPCAdims),1);
+[b] = SGD(histDesign(1:trainN,:),reduceWvltData(1:trainN,1:Q),newResp(1:trainN));
 
-count = 1;
-for ii=testPCAdims
-    [b,dev,~] = glmfit([histDesign(1:trainN,:),...
-            reduceDctData(1:trainN,1:ii)],newResp(1:trainN),'poisson');
-    AIC(count) = dev+2*length(b);
-    allB{count} = b;
-    count = count+1;
-end
-
-[~,ind] = min(AIC);
-
-b = allB{ind};Q = testPCAdims(ind);
 numHistParams = size(histDesign,2);
 
-predictTrain = exp(b(1)+reduceDctData(trainN+1:end,1:Q)*b(2+numHistParams:end));
+predictTrain = GetModelSmall(reduceWvltData(trainN+1:end,1:Q),b,numHistParams);
 trueTrain = newResp(trainN+1:end);
 
-initialDev = trueTrain.*log(trueTrain./predictTrain)-(trueTrain-predictTrain);
-initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
-modelDev = 2*sum(initialDev);
+modelDev = GetDeviance(trueTrain,predictTrain);
 
 nullEst = mean(trueTrain).*ones(length(trueTrain),1);
-nullDev = trueTrain.*log(trueTrain./nullEst)-(trueTrain-nullEst);
-nullDev(isnan(nullDev) | isinf(nullDev)) = nullEst(isnan(nullDev) | isinf(nullDev));
-nullDev = 2*sum(nullDev);
+nullDev = GetDeviance(trueTrain,nullEst);
 
 expDev = max(1-modelDev/nullDev,0);
 
@@ -323,35 +377,17 @@ reduceDctData = x';
 
 trainN = round(length(newResp).*train);
 
-testPCAdims = unique(round(linspace(0,Q,20)));
-AIC = zeros(length(testPCAdims),1);
-allB = cell(length(testPCAdims),1);
+[b] = SGD(histDesign(1:trainN,:),reduceDctData(1:trainN,1:Q),newResp(1:trainN));
 
-count = 1;
-for ii=testPCAdims
-    [b,dev,~] = glmfit([histDesign(1:trainN,:),...
-            reduceDctData(1:trainN,1:ii)],newResp(1:trainN),'poisson');
-    AIC(count) = dev+2*length(b);
-    allB{count} = b;
-    count = count+1;
-end
-
-[~,ind] = min(AIC);
-
-b = allB{ind};Q = testPCAdims(ind);
 numHistParams = size(histDesign,2);
 
-predictTrain = exp(b(1)+reduceDctData(trainN+1:end,1:Q)*b(2+numHistParams:end));
+predictTrain = GetModelSmall(reduceDctData(trainN+1:end,1:Q),b,numHistParams);
 trueTrain = newResp(trainN+1:end);
 
-initialDev = trueTrain.*log(trueTrain./predictTrain)-(trueTrain-predictTrain);
-initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
-modelDev = 2*sum(initialDev);
+modelDev = GetDeviance(trueTrain,predictTrain);
 
 nullEst = mean(trueTrain).*ones(length(trueTrain),1);
-nullDev = trueTrain.*log(trueTrain./nullEst)-(trueTrain-nullEst);
-nullDev(isnan(nullDev) | isinf(nullDev)) = nullEst(isnan(nullDev) | isinf(nullDev));
-nullDev = 2*sum(nullDev);
+nullDev = GetDeviance(trueTrain,nullEst);
 
 expDev = max(1-modelDev/nullDev,0);
 end
@@ -362,8 +398,8 @@ miniMov = zeros(DIM,DIM,numBack);
 R = wavedec3(miniMov,1,'db4');
 R = R.dec;R = R{1};
 
-fullWVLTDim = numel(R)*4;
-wvltMov = zeros(numFrames,fullWVLTDim);
+fullWVLTdim = numel(R)*4;
+wvltMov = zeros(numFrames,fullWVLTdim);
 
 count = 1;
 for jj=inds'
@@ -388,8 +424,12 @@ for jj=inds'
     count = count+1;
 end
 
-tempInds = var(wvltMov,[],1)>100;
+maxToKeep = 3.5e4;p = maxToKeep/fullWVLTdim;
+temp = var(wvltMov,[],1);
+Q = quantile(temp,1-p);
+tempInds = temp>=Q;
 wvltMov = wvltMov(:,tempInds);
+fullWVLTdim = size(wvltMov,2);
 % S = cov(wvltMov); % or try shrinkage_cov
 S = shrinkage_cov(wvltMov);
 [V,D] = eig(S);clear S;
@@ -400,8 +440,8 @@ wvltMov = wvltMov-repmat(mu,[1,numFrames]);
 
 allEigs = diag(D);
 fullVariance = sum(allEigs);
-for jj=50:1:fullWVLTDim-10
-    start = fullWVLTDim-jj+1;
+for jj=50:1:fullWVLTdim-10
+    start = fullWVLTdim-jj+1;
     eigenvals = allEigs(start:end);
     varianceProp = sum(eigenvals)/fullVariance;
     if varianceProp >= 0.99
@@ -416,39 +456,21 @@ clear V D;
 W = fliplr(W);
 Winv = pinv(W);
 x = Winv*wvltMov; % number of dimensions kept by N
-reduceDctData = x';
+reduceWvltData = x';
 
 trainN = round(length(newResp).*train);
 
-testPCAdims = unique(round(linspace(0,Q,20)));
-AIC = zeros(length(testPCAdims),1);
-allB = cell(length(testPCAdims),1);
+[b] = SGD(histDesign(1:trainN,:),reduceWvltData(1:trainN,1:Q),newResp(1:trainN));
 
-count = 1;
-for ii=testPCAdims
-    [b,dev,~] = glmfit([histDesign(1:trainN,:),...
-            reduceDctData(1:trainN,1:ii)],newResp(1:trainN),'poisson');
-    AIC(count) = dev+2*length(b);
-    allB{count} = b;
-    count = count+1;
-end
-
-[~,ind] = min(AIC);
-
-b = allB{ind};Q = testPCAdims(ind);
 numHistParams = size(histDesign,2);
 
-predictTrain = exp(b(1)+reduceDctData(trainN+1:end,1:Q)*b(2+numHistParams:end));
+predictTrain = GetModelSmall(reduceWvltData(trainN+1:end,1:Q),b,numHistParams);
 trueTrain = newResp(trainN+1:end);
 
-initialDev = trueTrain.*log(trueTrain./predictTrain)-(trueTrain-predictTrain);
-initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
-modelDev = 2*sum(initialDev);
+modelDev = GetDeviance(trueTrain,predictTrain);
 
 nullEst = mean(trueTrain).*ones(length(trueTrain),1);
-nullDev = trueTrain.*log(trueTrain./nullEst)-(trueTrain-nullEst);
-nullDev(isnan(nullDev) | isinf(nullDev)) = nullEst(isnan(nullDev) | isinf(nullDev));
-nullDev = 2*sum(nullDev);
+nullDev = GetDeviance(trueTrain,nullEst);
 
 expDev = max(1-modelDev/nullDev,0);
 
