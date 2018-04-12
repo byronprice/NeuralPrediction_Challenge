@@ -20,11 +20,31 @@ for ii=1:numCells
     numFrames = length(newResp);
     mov = loadimfile(celldata(ii).fullstimfile);
     
+    histLags = 30;
+    histDesign = zeros(length(resp),histLags);
+    temp = resp;
+    for jj=1:histLags
+       temp = [0;temp(1:end-1)];
+       histDesign(:,jj) = temp;
+    end
+    
+    histDesign = histDesign(inds,:);
+    
+    histBases = 10;
+    histdev = 1.75;
+    
+    histBasisFuns = zeros(histLags,histBases);
+    time = linspace(0,histLags-1,histLags);
+    centerPoints = linspace(0,histLags-1,histBases);
+    for kk=1:histBases
+        histBasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*histdev*histdev));
+    end
+    
     meanResponse = mean(newResp);
     newResp = newResp-meanResponse;
     
     [trueDim,~,movFrames] = size(mov);
-    DIM = [40,40];
+    DIM = [50,50];
     
     tempMov = zeros(DIM(1),DIM(2),movFrames);
     for jj=1:movFrames
@@ -48,17 +68,17 @@ for ii=1:numCells
     end
     meanToSubtract = sum(newMov,1)./numFrames;
     newMov = newMov-meanToSubtract;
-    [fullSTRF,~,~] = fastASD(newMov,newResp,[DIM(1),DIM(2),numBack],[2,2,1]);
+    [fullSTRF,~,~] = fastASD_aniso(newMov,newResp,[DIM(1),DIM(2),numBack],[1,1,1]);
     
-    numIter = 250;result = zeros(numIter,2);
+    numIter = 1000;result = zeros(numIter,2);
     allInds = 1:numFrames;
     for jj=1:numIter
         inds = randperm(numFrames,round(numFrames.*0.75));
         inds = ismember(allInds,inds);
         holdOutInds = ~inds;
         
-        [b,~,~] = glmfit(newMov(inds,:)*fullSTRF,newResp(inds),'poisson');
-        r = corrcoef(exp(newMov(holdOutInds,:)*fullSTRF*b(2:end)+b(1)),newResp(holdOutInds));
+        [b,~,~] = glmfit([histDesign,newMov(inds,:)*fullSTRF],newResp(inds)+meanResponse,'poisson');
+        r = corrcoef(exp(newMov(holdOutInds,:)*fullSTRF*b(2+histBases:end)+b(1)),newResp(holdOutInds));
         result(jj,1) = r(1,2);
         
         r = corrcoef(max(newMov(holdOutInds,:)*fullSTRF+meanResponse,0),newResp(holdOutInds));
@@ -66,11 +86,14 @@ for ii=1:numCells
     end
     
     result = median(result,1);
-    display(result);
+    disp(ii);
+    disp(result);
     
-    if result(1)>result(2)
+    if result(1)>=result(2)
        poisson = true; 
-       [b,~,~] = glmfit(newMov*fullSTRF,newResp,'poisson');
+       [b,~,~] = glmfit([histDesign,newMov*fullSTRF],newResp+meanResponse,'poisson');
+       b = [b(1);b(2+histBases:end)];
+       disp(b);
     else
        poisson = false; 
     end
@@ -101,7 +124,7 @@ for ii=1:numCells
             temp = imresize(temp,DIM(1)/DIM1);
             miniMov(:,:,kk) = temp;
         end
-        newMov(jj,:) = temp(:)';
+        newMov(jj,:) = miniMov(:)';
     end
     newMov = newMov-meanToSubtract;
     
