@@ -187,7 +187,7 @@ allB = cell(numRuns,1);
 getObjective = @(b,dev,penalty) (dev+norm(b,1)*penalty);
 
 allB{1} = bInit;
-prediction = GetModelSmall(reduceDesign(trainN+1,:),bInit,histParams);
+prediction = GetModelSmall(reduceDesign(trainN+1:end,:),bInit,histParams);
 heldOutDev(1) = GetDeviance(newResp(trainN+1:end),prediction);
 for ii=2:numRuns
    lambda = penalty(ii);
@@ -223,7 +223,7 @@ for ii=2:numRuns
    [~,ind] = min(iterObj);
    
    b = iterB(ind,:)';allB{ii} = b;
-   prediction = GetModelSmall(reduceDesign(trainN+1,:),b,histParams);
+   prediction = GetModelSmall(reduceDesign(trainN+1:end,:),b,histParams);
    heldOutDev(ii) = GetDeviance(newResp(trainN+1:end),prediction);
 end
 
