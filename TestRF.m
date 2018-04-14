@@ -75,7 +75,8 @@ end
 
 function [predictTrain,trueTrain,expDev,b,Q,mu,Winv] = DCTModel(mov,inds,DIM,numBack,numFrames,newResp,histDesign,train)
 % DCT-PCA model
-dimRun = [90,80,70,60,50,40,30,20,10.*ones(1,numBack-8)];
+% dimRun = [90,80,70,60,50,40,30,20,10.*ones(1,numBack-8)];
+dimRun = 30.*ones(1,numBack);
 dctDims = zeros(DIM,DIM,numBack);
 for jj=1:numBack
     currentDim = min(DIM,dimRun(jj));
@@ -136,7 +137,8 @@ trainN = round(length(newResp).*train);
 
 numHistParams = size(histDesign,2);
 
-predictTrain = GetModelSmall(reduceDctData(trainN+1:end,1:Q),b,numHistParams);
+logMaxResp = max(log(newResp));
+predictTrain = GetModelSmall(reduceDctData(trainN+1:end,1:Q),b,numHistParams,logMaxResp);
 trueTrain = newResp(trainN+1:end);
 
 modelDev = GetDeviance(trueTrain,predictTrain);
@@ -159,26 +161,26 @@ prediction = exp(b(1)+histDesign*b(2:histParams+1)+reduceDesign*b(histParams+2:e
 
 end
 
-function [prediction] = GetModelSmall(reduceDesign,b,histParams)
+function [prediction] = GetModelSmall(reduceDesign,b,histParams,maxLogResp)
 
-prediction = exp(b(1)+reduceDesign*b(histParams+2:end));
+prediction = exp(min(b(1)+reduceDesign*b(histParams+2:end),maxLogResp));
 
 end
 
 function [b] = SGD(histDesign,reduceDesign,newResp)
 trainN = round(0.8*length(newResp));
 
-[bInit,devInit,~] = glmfit([histDesign(1:trainN,:),reduceDesign(1:trainN,:)],...
+[bInit,devInit,~] = glmfit([reduceDesign(1:trainN,:)],...
     newResp(1:trainN),'poisson');
 
 maxIter = 1e5;
-histParams = size(histDesign,2);
+histParams = 0;%size(histDesign,2);
 lassoInds = histParams+2:length(bInit);
 
 numParams = length(lassoInds);
 
 onenorm = norm(bInit(lassoInds),1);
-penalty = ([0,1/1000,1/100,1/10,1,5,10,50,100].*devInit)./onenorm;
+penalty = ([0,1/10000,1/1000,1/100,1/10,1,5,10,50,100,1000].*devInit)./onenorm;
 
 numRuns = length(penalty);
 heldOutDev = zeros(numRuns,1);
@@ -186,14 +188,16 @@ allB = cell(numRuns,1);
 
 getObjective = @(b,dev,penalty) (dev+norm(b,1)*penalty);
 
+maxLogResp = max(log(newResp));
 allB{1} = bInit;
-prediction = GetModelSmall(reduceDesign(trainN+1:end,:),bInit,histParams);
+prediction = GetModelSmall(reduceDesign(trainN+1:end,:),bInit,histParams,maxLogResp);
+% figure;plot(newResp(trainN+1:end));hold on;plot(prediction);pause(0.1);
 heldOutDev(1) = GetDeviance(newResp(trainN+1:end),prediction);
 for ii=2:numRuns
    lambda = penalty(ii);
    
    b = bInit;
-   prediction = GetModelFull(histDesign(1:trainN,:),reduceDesign(1:trainN,:),b,histParams);
+   prediction = GetModelSmall(reduceDesign(1:trainN,:),b,histParams,maxLogResp);
    objective = getObjective(b(lassoInds),GetDeviance(newResp(1:trainN),prediction),lambda);
    
    iterB = zeros(maxIter,length(b));
@@ -203,15 +207,15 @@ for ii=2:numRuns
    iterB(1,:) = b;
    for jj=2:maxIter
        tempB = iterB(jj-1,:)';tempB2 = tempB(lassoInds);
-       inds = random('Discrete Uniform',numParams,[5,1]);
+       inds = random('Discrete Uniform',numParams,[1,1]);
        
-       tempB2(inds) = tempB2(inds) + normrnd(0,1,[5,1]);
+       tempB2(inds) = tempB2(inds) + normrnd(0,0.1);
        tempB(lassoInds) = tempB2;
        
-       prediction = GetModelFull(histDesign(1:trainN,:),reduceDesign(1:trainN,:),tempB,histParams);
+       prediction = GetModelSmall(reduceDesign(1:trainN,:),tempB,histParams,maxLogResp);
        tempobjective = getObjective(tempB(lassoInds),GetDeviance(newResp(1:trainN),prediction),lambda);
        
-       logA = tempobjective-iterObj(jj-1);
+       logA = iterObj(jj-1)-tempobjective;
        if log(rand)<logA
            iterObj(jj) = tempobjective;
            iterB(jj,:) = tempB;
@@ -219,11 +223,13 @@ for ii=2:numRuns
            iterObj(jj) = iterObj(jj-1);
            iterB(jj,:) = iterB(jj-1,:);
        end
+%        plot(jj,iterObj(jj),'.');hold on;pause(1/1000);
    end
    [~,ind] = min(iterObj);
    
    b = iterB(ind,:)';allB{ii} = b;
-   prediction = GetModelSmall(reduceDesign(trainN+1:end,:),b,histParams);
+   prediction = GetModelSmall(reduceDesign(trainN+1:end,:),b,histParams,maxLogResp);
+   figure;plot(newResp(trainN+1:end));hold on;plot(prediction);pause(0.1);
    heldOutDev(ii) = GetDeviance(newResp(trainN+1:end),prediction);
 end
 
@@ -306,7 +312,8 @@ trainN = round(length(newResp).*train);
 
 numHistParams = size(histDesign,2);
 
-predictTrain = GetModelSmall(reduceWvltData(trainN+1:end,1:Q),b,numHistParams);
+logMaxResp = max(log(newResp));
+predictTrain = GetModelSmall(reduceWvltData(trainN+1:end,1:Q),b,numHistParams,logMaxResp);
 trueTrain = newResp(trainN+1:end);
 
 modelDev = GetDeviance(trueTrain,predictTrain);
@@ -380,8 +387,8 @@ trainN = round(length(newResp).*train);
 [b] = SGD(histDesign(1:trainN,:),reduceDctData(1:trainN,1:Q),newResp(1:trainN));
 
 numHistParams = size(histDesign,2);
-
-predictTrain = GetModelSmall(reduceDctData(trainN+1:end,1:Q),b,numHistParams);
+logMaxResp = max(log(newResp));
+predictTrain = GetModelSmall(reduceDctData(trainN+1:end,1:Q),b,numHistParams,logMaxResp);
 trueTrain = newResp(trainN+1:end);
 
 modelDev = GetDeviance(trueTrain,predictTrain);
@@ -463,8 +470,8 @@ trainN = round(length(newResp).*train);
 [b] = SGD(histDesign(1:trainN,:),reduceWvltData(1:trainN,1:Q),newResp(1:trainN));
 
 numHistParams = size(histDesign,2);
-
-predictTrain = GetModelSmall(reduceWvltData(trainN+1:end,1:Q),b,numHistParams);
+logMaxResp = max(log(newResp));
+predictTrain = GetModelSmall(reduceWvltData(trainN+1:end,1:Q),b,numHistParams,logMaxResp);
 trueTrain = newResp(trainN+1:end);
 
 modelDev = GetDeviance(trueTrain,predictTrain);
