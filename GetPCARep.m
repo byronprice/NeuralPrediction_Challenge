@@ -59,14 +59,17 @@ for ii=1:numCells
     params.tfmax = 5;
     params.dirdivisions = 12;
     
-    newMov = zeros(DIM,DIM,fullFrames+valFrames);
+    newMov = zeros(DIM,DIM,fullFrames+valFrames+numBack-1);
     
     count = 1;
     for jj=1:fullFrames
         newMov(:,:,count) = mov(:,:,jj);
         count = count+1;
     end
-    
+    for jj=1:numBack-1
+       newMov(:,:,count) = meanIm;
+       count = count+1;
+    end
     for jj=1:valFrames
         newMov(:,:,count) = valMov(:,:,jj);
         count = count+1;
@@ -74,8 +77,15 @@ for ii=1:numCells
         
     [stim,params] = preprocWavelets3d(newMov,params);
     trainStim = stim(1:fullFrames,:);
-    valStim = stim(fullFrames+1:end,:);
-    save(sprintf('Cell%d_3Dwvlts.mat',ii),'inds','resp','newresp','trainStim',...
+    valStim = stim(fullFrames+numBack:end,:);
+    save(sprintf('Cell%d_3Dwvlts20.mat',ii),'inds','resp','newresp','trainStim',...
+        'params','valStim','cellid','DIM','numBack');
+    
+    params.tsize = 10;
+    [stim,params] = preprocWavelets3d(newMov,params);
+    trainStim = stim(1:fullFrames,:);
+    valStim = stim(fullFrames+numBack:end,:);
+    save(sprintf('Cell%d_3Dwvlts10.mat',ii),'inds','resp','newresp','trainStim',...
         'params','valStim','cellid','DIM','numBack');
 end
 end
@@ -97,10 +107,10 @@ count = 1;
 for jj=inds'
     miniMov = zeros(DIM,DIM,numBack);
     for kk=1:numBack
-        if jj-kk-2 < 1
+        if jj-kk-1 < 1
             temp = meanIm;
         else
-            temp = mov(:,:,max(jj-kk-2,1));
+            temp = mov(:,:,max(jj-kk-1,1));
         end
         miniMov(:,:,kk) = temp;
     end
@@ -110,13 +120,13 @@ for jj=inds'
     count = count+1;
 end
 
-for ii=1:valFrames
+for jj=1:valFrames
     miniMov = zeros(DIM,DIM,numBack);
     for kk=1:numBack
-        if jj-kk-2 < 1
+        if jj-kk-1 < 1
             temp = meanIm;
         else
-            temp = valMov(:,:,max(jj-kk-2,1));
+            temp = valMov(:,:,max(jj-kk-1,1));
         end
         miniMov(:,:,kk) = temp;
     end
@@ -165,7 +175,7 @@ miniMov = zeros(DIM,DIM,numBack);
 R = wavedec3(miniMov,2,'db4');
 R = R.dec;
 
-fullWVlTdim = 0;
+fullWVLTdim = 0;
 
 for ii=1:size(R,1)
     fullWVLTdim = fullWVLTdim+numel(R{ii});
@@ -177,10 +187,10 @@ count = 1;
 for jj=inds'
     miniMov = zeros(DIM,DIM,numBack);
     for kk=1:numBack
-        if jj-kk-2 < 1
+        if jj-kk-1 < 1
             temp = meanIm;
         else
-            temp = mov(:,:,max(jj-kk-2,1));
+            temp = mov(:,:,max(jj-kk-1,1));
         end
         miniMov(:,:,kk) = temp;
     end
@@ -196,13 +206,13 @@ for jj=inds'
     count = count+1;
 end
 
-for jj=inds'
+for jj=1:valFrames
     miniMov = zeros(DIM,DIM,numBack);
     for kk=1:numBack
-        if jj-kk-2 < 1
+        if jj-kk-1 < 1
             temp = meanIm;
         else
-            temp = valMov(:,:,max(jj-kk-2,1));
+            temp = valMov(:,:,max(jj-kk-1,1));
         end
         miniMov(:,:,kk) = temp;
     end
@@ -218,7 +228,7 @@ for jj=inds'
     count = count+1;
 end
 
-wvltMov = wvltMov-mean(wvltMov,1);
+%wvltMov = wvltMov-mean(wvltMov,1);
 
 maxToKeep = 4e4;p = maxToKeep/fullWVLTdim;
 temp = var(wvltMov,[],1);
