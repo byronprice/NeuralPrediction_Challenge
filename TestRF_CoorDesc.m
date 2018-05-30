@@ -72,7 +72,7 @@ for ii=1:numCells
         weightInds = 2:length(weights);
         
         % myCost = @(y,mu) y.*log(y./mu)-(y-mu); % poisson deviance
-        %     likelihood = @(y,mu) sum(-mu-log(factorial(y))+y.*log(mu)); % divide by factorial(y)
+%         likelihood = @(y,mu) sum(-mu-log(factorial(y))+y.*log(mu)); % divide by factorial(y)
         %  if values can be greater than 1
         
         likelihood = @(y,mu) -sum((y-mu).^2);% normal log-likelihood
@@ -171,7 +171,7 @@ for ii=1:numCells
         ind
         weights = lastTwentyWeights(:,ind);
         
-        save(sprintf('%s_rfinfo3.mat',celldata(ii).cellid),'params','weights','link','maxLikelihood');
+        save(sprintf('%s_rfinfo%d.mat',celldata(ii).cellid,mm),'params','weights','link','maxLikelihood');
         
         
         vstim = origStim(end-721:end,:);
