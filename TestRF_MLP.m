@@ -19,7 +19,7 @@ end
 prediction1 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
 prediction2 = struct('cellid',cell(numCells,1),'response',zeros(713,1));
 
-for ii=1:numCells
+for ii=8:numCells
     resp = neuralResponse{ii};
    
     load(sprintf('%s_data.mat',celldata(ii).cellid),'stim','vstim');
@@ -72,7 +72,7 @@ for ii=1:numCells
     
     [keepInds2,ia,~] = unique(keepInds);
     allVals = (1:length(keepInds))';
-    nonUnique = unique(keepInds(~ismember(allVals,ia)));
+%     nonUnique = unique(keepInds(~ismember(allVals,ia)));
 %     nonUnique
     design = design(:,keepInds2);
     design = [design,ones(size(design,1),1)];
@@ -99,8 +99,8 @@ for ii=1:numCells
     % on those "runs" times
     runs = 2e6;
 
-    eta = 0.01;
-    lambdaVals = [0,0.1,1,10,25,50,100,150,250,500,1000,1500,2000,5000];
+    eta = 0.001;
+    lambdaVals = [0,0.1,1,1e1,5e1,1e2,2.5e2,5e2,7.5e2,1e3,2.5e3,5e3];
     
     heldOutDev = zeros(numDivisions,length(lambdaVals));
     predictions = zeros(713,numDivisions,length(lambdaVals));
@@ -161,24 +161,28 @@ for ii=1:numCells
                 
                 for kk=1:length(testData)
                     [~,Z] = Feedforward(testDesign(kk,:)',tempNet);
-                    predictTrain(kk) = max(Z{end},0);% exp(Z{end});
+                    predictTrain(kk) = exp(Z{end}); %max(Z{end},0);
                 end
                 
-%                 % modelDev = GetDeviance(testData,predictTrain);
-%                 initialDev = testData.*log(testData./predictTrain)-(testData-predictTrain);
-%                 initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
-%                 modelDev = 2*sum(initialDev);
-%                 
-%                 nullEst = mean(testData).*ones(length(testData),1);
-%                 % nullDev = GetDeviance(testData,nullEst);
-%                 initialDev = testData.*log(testData./nullEst)-(testData-nullEst);
-%                 initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
-%                 nullDev = 2*sum(initialDev);
-%                 tempHeldOut = 1-modelDev/nullDev;
+                % modelDev = GetDeviance(testData,predictTrain);
+                initialDev = testData.*log(testData./predictTrain)-(testData-predictTrain);
+                initialDev(isnan(initialDev) | isinf(initialDev)) = predictTrain(isnan(initialDev) | isinf(initialDev));
+                modelDev = 2*sum(initialDev);
+                
+%                 if isnan(modelDev)
+%                     pause(1);
+%                 end
+                
+                nullEst = mean(testData).*ones(length(testData),1);
+                % nullDev = GetDeviance(testData,nullEst);
+                initialDev = testData.*log(testData./nullEst)-(testData-nullEst);
+                initialDev(isnan(initialDev) | isinf(initialDev)) = nullEst(isnan(initialDev) | isinf(initialDev));
+                nullDev = 2*sum(initialDev);
+                tempHeldOut = 1-modelDev/nullDev;
 
-                nullVar = var(testData);
-                modelVar = var(predictTrain-testData);
-                heldOutExpVar = 1-modelVar/nullVar;
+%                 nullVar = var(testData);
+%                 modelVar = var(predictTrain-testData);
+                heldOutExpVar = tempHeldOut;%1-modelVar/nullVar;
                 
                 oldExpVars = [heldOutExpVar,oldExpVars(1:end-1)];
                 
@@ -186,7 +190,7 @@ for ii=1:numCells
                 
                 for kk=1:size(vdesign,1)
                     [~,Z] = Feedforward(vdesign(kk,:)',tempNet);
-                    finalPred(kk) = max(Z{end},0);% exp(Z{end});
+                    finalPred(kk) = exp(Z{end});% max(Z{end},0);
                 end
                 oldPreds = [finalPred,oldPreds(:,1:end-1)];
                 
@@ -194,6 +198,7 @@ for ii=1:numCells
                 if sum((oldExpVars(1:myind)-maxVal)<0) >= numToKeep-1 && ww>=numToKeep
                     break;
                 end
+%                 plot(ww,heldOutExpVar,'.');hold on;axis([0 ww 0 1]);pause(1/100);
             end
             [maxExpVar,ind] = max(oldExpVars);
             predictions(:,mm,lambdacount) = oldPreds(:,ind);
@@ -215,8 +220,8 @@ for ii=1:numCells
     prediction2(ii).response = myPreds(:,ind);
 end
 prediction = prediction1;
-save('3DWavs_MLP-Identity3.mat','prediction');
+save('3DWavs_MLP-Exp3.mat','prediction');
 prediction = prediction2;
-save('3DWavs_MLP-Identity4.mat','prediction');
+save('3DWavs_MLP-Exp5.mat','prediction');
 end
 
