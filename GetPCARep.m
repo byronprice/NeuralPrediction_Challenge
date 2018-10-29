@@ -81,6 +81,7 @@ for ii=1:numCells
     save(sprintf('Cell%d_3Dwvlts20.mat',ii),'inds','resp','newresp','trainStim',...
         'params','valStim','cellid','DIM','numBack');
     
+    numBack = 10;
     params.tsize = 10;
     [stim,params] = preprocWavelets3d(newMov,params);
     trainStim = stim(1:fullFrames,:);

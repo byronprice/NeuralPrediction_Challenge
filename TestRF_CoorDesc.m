@@ -2,7 +2,7 @@ function [] = TestRF_CoorDesc()
 % 3D Gabor wavelets with coordinate descent
 warning('off','all');
 
-train = 0.8;
+train = 0.75;
 
 cellinfo
 
@@ -16,7 +16,7 @@ end
 
 prediction = struct('cellid',cell(numCells,1),'response',zeros(713,1));
 
-for ii=1:numCells
+for ii=numCells:-1:1
     resp = neuralResponse{ii};
    
     load(sprintf('%s_data.mat',celldata(ii).cellid),'stim','vstim');
@@ -28,21 +28,43 @@ for ii=1:numCells
        tempStim(:,:,jj) = meanIm;
     end
     
-    allStims = cat(3,stim,tempStim);
-    allStims = cat(3,allStims,vstim);
+    newStim = zeros(size(stim));
+    for jj=1:size(stim,3)
+        if jj==1
+            newStim(:,:,jj) = stim(:,:,jj)-meanIm;
+        else
+            newStim(:,:,jj) = stim(:,:,jj)-meanIm; 
+        end
+    end
+    stim = newStim;
+    
+    vstim = cat(3,tempStim,vstim);
+    
+    newStim = zeros(size(vstim));
+    for jj=1:size(vstim,3)
+        if jj==1
+            newStim(:,:,jj) = vstim(:,:,jj)-meanIm;
+        else
+            newStim(:,:,jj) = vstim(:,:,jj)-meanIm; 
+        end
+    end
+    vstim = newStim;
+    
+    allStims = cat(3,stim,vstim);
     
     prediction(ii).cellid = celldata(ii).cellid;
     
     params = preprocWavelets3d;
     params.dirdivisions = 12;
-    params.fdivisions = 6; % 6 or 8, depending on phasemode
-    params.veldivisions = 6; % 6
+    params.fdivisions = 8; % 6 or 8, depending on phasemode
+    params.veldivisions = 10; % 6
     params.tsize = numLags;
     params.phasemode = 3; % 0, 1, or 3
-    [origStim,params] = preprocWavelets3d(allStims, params);
-    
+    params.zeromean_value = 0;
+    % [origStim,params] = preprocWavelets3d(allStims, params);
+    [origStim] = GenerateTSBases(allStims,7^5,[size(meanIm,1),size(meanIm,1),numLags]);
     data = resp;
-    stim = origStim(1:length(resp),:);
+    stim = origStim(1:length(data),:);
     
     nWts = size(stim,2);
     design = zeros(size(stim,1)-(numLags-1),nWts*numLags); % 10 delays
@@ -66,16 +88,16 @@ for ii=1:numCells
         trainIdx = find(temp);
         
         weights = zeros(nWts*numLags+1,1);
-        link = @(x) x;
-        weights(1) = mean(data);
+        link = @(x) exp(x);
+        weights(1) = log(mean(data));
+%         likelihood = @(y,mu) -sum((y-mu).^2);% negative normal log-likelihood
+        likelihood = @(y,mu)  y.*log(y./mu)-(y-mu); % negative poisson deviance
         
         weightInds = 2:length(weights);
         
         % myCost = @(y,mu) y.*log(y./mu)-(y-mu); % poisson deviance
 %         likelihood = @(y,mu) sum(-mu-log(factorial(y))+y.*log(mu)); % divide by factorial(y)
         %  if values can be greater than 1
-        
-        likelihood = @(y,mu) -sum((y-mu).^2);% normal log-likelihood
         
         mu = link(weights(1)+design(trainIdx,:)*weights(weightInds));
         
@@ -84,6 +106,8 @@ for ii=1:numCells
         % prevCost = 2*sum(cost);
         
         prevLikely = likelihood(data(trainIdx),mu);
+        prevLikely(isnan(prevLikely) | isinf(prevLikely)) = mu(isnan(prevLikely) | isinf(prevLikely));
+        prevLikely = -2*sum(prevLikely);
         
         numIter = 5e4;
         numParams = length(weightInds);
@@ -99,7 +123,10 @@ for ii=1:numCells
         numToKeep = 100;
         lastTwenty = zeros(numToKeep,1);
         mu = link(weights(1)+design(testIdx,:)*weights(weightInds));
-        lastTwenty(1) = likelihood(data(testIdx),mu);
+        tmp = likelihood(data(testIdx),mu);
+        tmp(isnan(tmp) | isinf(tmp)) = mu(isnan(tmp) | isinf(tmp));
+        tmp = -2*sum(tmp);
+        lastTwenty(1) = tmp;
         
         lastTwentyWeights = zeros(length(weights),numToKeep);
         lastTwentyWeights(:,1) = weights;
@@ -123,14 +150,20 @@ for ii=1:numCells
                     tempweights(ind) = prevWeight+dt*sign(prevGrad)*lineSearch(kk);
                     mu = link(weights(1)+design(trainIdx,nonZeroInds)*tempweights(nonZeroInds));
                     
-                    lineCost(kk) = likelihood(data(trainIdx),mu);
+                    tmp = likelihood(data(trainIdx),mu);
+                    tmp(isnan(tmp) | isinf(tmp)) = mu(isnan(tmp) | isinf(tmp));
+                    tmp = -2*sum(tmp);
+                    lineCost(kk) = tmp;
                 end
                 [maxLikely,searchInd] = max(lineCost);
                 
                 if isinf(maxLikely)
                     tempweights(ind) = prevWeight;
                     mu = link(weights(1)+design(trainIdx,nonZeroInds)*tempweights(nonZeroInds));
-                    maxLikely = likelihood(data(trainIdx),mu);
+                    tmp = likelihood(data(trainIdx),mu);
+                    tmp(isnan(tmp) | isinf(tmp)) = mu(isnan(tmp) | isinf(tmp));
+                    tmp = -2*sum(tmp);
+                    maxLikely = tmp;
                     break;
                 end
                 prevWeight = prevWeight+dt*sign(prevGrad)*lineSearch(searchInd);
@@ -151,27 +184,29 @@ for ii=1:numCells
             
             mu = link(weights(1)+design(testIdx,nonZeroInds)*weights(weightInds(nonZeroInds)));
             
-            heldOutLikely = likelihood(data(testIdx),mu);
+            tmp = likelihood(data(testIdx),mu);
+            tmp(isnan(tmp) | isinf(tmp)) = mu(isnan(tmp) | isinf(tmp));
+            tmp = -2*sum(tmp);
+            heldOutLikely = tmp;
             lastTwenty = [heldOutLikely;lastTwenty(1:end-1)];
             
             lastTwentyWeights = [weights,lastTwentyWeights(:,1:end-1)];
             
             [maxVal,index] = max(lastTwenty);
             if sum((lastTwenty(1:index)-maxVal)<0) > numToKeep/2 && jj>numToKeep
-                corrcoef(data(testIdx),mu)
                 break;
             end
             
-            %     subplot(2,1,1);plot(ii,prevLikely,'.');hold on;
-            %     subplot(2,1,2);plot(ii,heldOutLikely,'.');hold on;
-            %     pause(1/100);
+%             subplot(2,1,1);plot(jj,prevLikely,'.');hold on;
+%             subplot(2,1,2);plot(jj,heldOutLikely,'.');hold on;
+%             pause(1/100);
         end
         
         [maxLikelihood,ind] = max(lastTwenty);
         ind
         weights = lastTwentyWeights(:,ind);
         
-        save(sprintf('%s_rfinfo%d.mat',celldata(ii).cellid,mm),'params','weights','link','maxLikelihood');
+        save(sprintf('%s_rfinfo_DiffIm%d.mat',celldata(ii).cellid,mm),'params','weights','link','maxLikelihood');
         
         
         vstim = origStim(end-721:end,:);
@@ -186,13 +221,14 @@ for ii=1:numCells
         
         bigMu = bigMu+mu./numDivisions;
     end
-    maxResp = max(data)+1;
+    maxResp = max(data)+2;
     bigMu = max(bigMu,0);
     bigMu = min(bigMu,maxResp);
     figure;plot(bigMu);pause(1/50);
     prediction(ii).response = bigMu;
+    save(sprintf('3DWavs_CoorDescent_TSBases-Exp%d.mat',ii),'prediction');
 end
 
-save('3DWavs_CoorDescent-Identity.mat','prediction');
+save('3DWavs_CoorDescent_TSBases-Exp.mat','prediction');
 
 end
