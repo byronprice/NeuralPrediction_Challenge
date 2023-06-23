@@ -44,10 +44,11 @@ for ii=1:numCells
     for jj=2:trueFrames
         prevFrame = mov(:,:,jj-1);
         currentFrame = mov(:,:,jj);
-        r = corrcoef(prevFrame(:),currentFrame(:));
-        corrs(jj) = r(1,2);
+%         r = corrcoef(prevFrame(:),currentFrame(:));
+        r = ssim(currentFrame,prevFrame);
+        corrs(jj) = r; %r(1,2);
     end
-    transitionInds = corrs<0.95;
+    transitionInds = 1-corrs; %corrs<0.95;
     
     numBack = 30;transDesign = zeros(trueFrames,numBack);
     temp = double(transitionInds);
@@ -70,9 +71,9 @@ for ii=1:numCells
     [~,timePoints] = size(transDesign);
     
     transBases = 10;histBases = 10;
-    tranStdevs = 1:0.1:4;histStdevs = 1:0.1:4;
+    tranStdevs = 0.5:0.1:5;histStdevs = 1:0.1:4;
     numIter = 200;
-    holdOutDev = zeros(length(tranStdevs),length(histStdevs));
+    holdOutDev = zeros(length(tranStdevs),1);
     allInds = 1:numFrames;cvLen = round(numFrames*0.7);
     for jj=1:length(tranStdevs)
         transbasisFuns = zeros(timePoints,transBases);
@@ -82,24 +83,23 @@ for ii=1:numCells
             transbasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*tranStdevs(jj)*tranStdevs(jj)));
         end
         
-        for ll=1:length(histStdevs)
-            histbasisFuns = zeros(histLags,histBases);
-            time = linspace(0,histLags-1,histLags);
-            centerPoints = linspace(0,histLags-1,histBases);
-            for kk=1:histBases
-                histbasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*histStdevs(ll)*histStdevs(ll)));
-            end
-            
+%         for ll=1:length(histStdevs)
+%             histbasisFuns = zeros(histLags,histBases);
+%             time = linspace(0,histLags-1,histLags);
+%             centerPoints = linspace(0,histLags-1,histBases);
+%             for kk=1:histBases
+%                 histbasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*histStdevs(ll)*histStdevs(ll)));
+%             end
+%             
             deviance = zeros(numIter,1);
             for kk=1:numIter
                 tempInds = randperm(numFrames,cvLen);
                 tempInds = ismember(allInds,tempInds);
                 holdOutInds = ~tempInds;
-                [b,~,~] = glmfit([transDesign(tempInds,:)*transbasisFuns,...
-                    histDesign(tempInds,:)*histbasisFuns],newResp(tempInds)+meanResponse,'poisson');
+                [b,~,~] = glmfit(transDesign(tempInds,:)*transbasisFuns...
+                    ,newResp(tempInds)+meanResponse,'poisson');
                 
-                estimate = exp(b(1)+transDesign(holdOutInds,:)*transbasisFuns*b(2:transBases+1)+...
-                    histDesign(holdOutInds,:)*histbasisFuns*b(transBases+2:end));
+                estimate = exp(b(1)+transDesign(holdOutInds,:)*transbasisFuns*b(2:transBases+1));
                 
                 y = newResp(holdOutInds)+meanResponse;
                 
@@ -107,14 +107,14 @@ for ii=1:numCells
                 initialDev(isnan(initialDev) | isinf(initialDev)) = estimate(isnan(initialDev) | isinf(initialDev));
                 deviance(kk) = 2*sum(initialDev);
             end
-        holdOutDev(jj,ll) = median(deviance);
-        end
+        holdOutDev(jj) = median(deviance);
+%         end
     end
-    [~,ind] = min(holdOutDev(:));
-    [ind_row,ind_col] = ind2sub(size(holdOutDev),ind);
-    stdev = tranStdevs(ind_row)+0.1;
-    histstdev = histStdevs(ind_col)+0.1;
-    rfs(ii).History = histstdev;
+    [~,ind] = min(holdOutDev);
+%     [ind_row,ind_col] = ind2sub(size(holdOutDev),ind);
+    stdev = tranStdevs(ind)+0.1;
+%     histstdev = histStdevs(ind_col)+0.1;
+%     rfs(ii).History = histstdev;
     rfs(ii).Transition = stdev;
     transbasisFuns = zeros(timePoints,transBases);
     time = linspace(0,timePoints-1,timePoints);
@@ -123,15 +123,15 @@ for ii=1:numCells
         transbasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*stdev*stdev));
     end
     
-    histbasisFuns = zeros(histLags,histBases);
-    time = linspace(0,histLags-1,histLags);
-    centerPoints = linspace(0,histLags-1,histBases);
-    for kk=1:histBases
-        histbasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*histstdev*histstdev));
-    end
+%     histbasisFuns = zeros(histLags,histBases);
+%     time = linspace(0,histLags-1,histLags);
+%     centerPoints = linspace(0,histLags-1,histBases);
+%     for kk=1:histBases
+%         histbasisFuns(:,kk) = exp(-(time-centerPoints(kk)).^2./(2*histstdev*histstdev));
+%     end
     fprintf('\nDiscovered appropriate standard deviations\n');
-    [b,minDev,~] = glmfit([transDesign*transbasisFuns,histDesign*histbasisFuns]...
-        ,newResp+meanResponse,'poisson');
+    [b,minDev,~] = glmfit(transDesign*transbasisFuns,... %,histDesign*histbasisFuns]...
+        newResp+meanResponse,'poisson');
     [~,dev,~] = glmfit(ones(length(newResp),1),newResp+meanResponse,'poisson','constant','off');
     
     fprintf('\nExplained Deviance: %3.3f\n',1-minDev/dev);
@@ -148,8 +148,9 @@ for ii=1:numCells
     for jj=2:trueFrames
         prevFrame = mov(:,:,jj-1);
         currentFrame = mov(:,:,jj);
-        r = corrcoef(prevFrame(:),currentFrame(:));
-        corrs(jj) = r(1,2);
+%         r = corrcoef(prevFrame(:),currentFrame(:));
+        r = ssim(currentFrame,prevFrame);
+        corrs(jj) = r; %r(1,2);
     end
     transitionInds = 1-corrs;
     
@@ -162,18 +163,20 @@ for ii=1:numCells
     end
     transDesign = transDesign(:,2:end);
     
-    numIter = 5000;
-    estResponse = zeros(trueFrames,numIter);
-    for jj=1:numIter
-        currentHist = poissrnd(exp(b(1)),[1,histLags]);
-        for kk=1:trueFrames
-            estResponse(kk,jj) = poissrnd(exp(b(1)+transDesign(kk,:)*...
-                transbasisFuns*b(2:transBases+1)+...
-                    currentHist*histbasisFuns*b(transBases+2:end)));
-            currentHist = [estResponse(kk,jj),currentHist(1:end-1)];
-        end
-    end
-    prediction(ii).response = median(estResponse,2);
+%     numIter = 5000;
+%     estResponse = zeros(trueFrames,numIter);
+%     for jj=1:numIter
+%         currentHist = poissrnd(exp(b(1)),[1,histLags]);
+%         for kk=1:trueFrames
+%             estResponse(kk,jj) = poissrnd(exp(b(1)+transDesign(kk,:)*...
+%                 transbasisFuns*b(2:transBases+1)+...
+%                     currentHist*histbasisFuns*b(transBases+2:end)));
+%             currentHist = [estResponse(kk,jj),currentHist(1:end-1)];
+%         end
+%     end
+    estResponse = exp(b(1)+transDesign*transbasisFuns*b(2:end));
+    figure;plot(estResponse);
+    prediction(ii).response = estResponse;
     prediction2(ii).response = exp(b(1)+transDesign*...
                 transbasisFuns*b(2:transBases+1));
 end
